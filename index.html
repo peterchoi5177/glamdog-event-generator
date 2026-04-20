@@ -254,14 +254,65 @@
           <button class="tab-btn px-3 py-2 text-sm rounded-t-lg" data-tab="staff">직원 운영 가이드</button>
           <button class="tab-btn px-3 py-2 text-sm rounded-t-lg" data-tab="dm">당첨자 DM</button>
           <button class="tab-btn px-3 py-2 text-sm rounded-t-lg" data-tab="checklist">체크리스트</button>
+          <button class="tab-btn px-3 py-2 text-sm rounded-t-lg" data-tab="winners">🎊 당첨자 공지</button>
         </div>
         <div class="p-5">
-          <div class="flex justify-end gap-2 mb-3">
-            <button id="copyBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">현재 탭 복사</button>
-            <button id="downloadBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">전체 .txt 다운로드</button>
-            <button id="regenBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">다시 생성</button>
+          <!-- 표준 탭 (caption/rules/staff/dm/checklist) -->
+          <div id="standardPanel">
+            <div class="flex justify-end gap-2 mb-3">
+              <button id="copyBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">현재 탭 복사</button>
+              <button id="downloadBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">전체 .txt 다운로드</button>
+              <button id="regenBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">다시 생성</button>
+            </div>
+            <pre id="resultBody" class="result text-gray-800"></pre>
           </div>
-          <pre id="resultBody" class="result text-gray-800"></pre>
+
+          <!-- 당첨자 공지 탭 -->
+          <div id="winnersPanel" class="hidden">
+            <!-- 입력 -->
+            <div class="border border-gray-200 rounded-lg p-4 mb-4">
+              <p class="font-semibold mb-3">당첨자 입력</p>
+              <div id="winnersInputs"></div>
+              <div class="mt-4 pt-4 border-t border-gray-200">
+                <p class="font-semibold mb-2">✨ 시크릿 / 보너스 당첨자 (선택)</p>
+                <div id="bonusInputs"></div>
+                <button id="addBonusBtn" class="mt-2 text-sm text-gray-600 hover:text-gray-900">+ 보너스 당첨자 추가</button>
+              </div>
+              <div class="mt-4 flex justify-end">
+                <button id="genAnnounceBtn" class="px-5 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-700">🎊 공지 & DM 생성하기</button>
+              </div>
+            </div>
+
+            <!-- 결과 -->
+            <div id="winnersResult" class="hidden space-y-4">
+              <!-- 공지 캡션 박스 -->
+              <div class="border border-gray-200 rounded-lg overflow-hidden">
+                <div class="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
+                  <p class="font-semibold text-sm">📢 공지 캡션</p>
+                  <button id="copyAnnounceBtn" class="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-white">복사</button>
+                </div>
+                <pre id="announceBody" class="result p-4 text-gray-800"></pre>
+              </div>
+
+              <!-- DM 카드들 -->
+              <div id="dmCards" class="space-y-3"></div>
+
+              <!-- 일괄 액션 -->
+              <div class="flex justify-end gap-2 pt-2">
+                <button id="copyAllDMsBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">📥 전체 DM 한 번에 복사</button>
+                <button id="saveWinnersBtn" class="text-sm px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100">💾 저장</button>
+              </div>
+            </div>
+
+            <!-- 공지 생성 중 미리보기 -->
+            <div id="annLoading" class="hidden bg-gray-50 border border-gray-200 rounded-lg p-4 mt-3">
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-4 h-4 border-2 border-gray-900 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-sm text-gray-700">공지 캡션 생성 중…</p>
+              </div>
+              <pre id="annStreamPreview" class="text-xs text-gray-600 font-mono whitespace-pre-wrap leading-relaxed max-h-40 overflow-hidden"></pre>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -342,8 +393,10 @@ let state = {
   currentEventId: null,
   events: [],
   activeTab: 'caption',
-  generated: null
+  generated: null,
+  winners: null  // { list:[{account,branch}], bonusList:[{account}], announcement:'', dms:[] }
 };
+const MAX_BONUS = 5;
 
 /* ====================== Utilities ====================== */
 const $ = (id) => document.getElementById(id);
@@ -532,6 +585,7 @@ function escapeHtml(s) { return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;'
 function newEvent() {
   state.currentEventId = null;
   state.generated = null;
+  state.winners = null;
   clearForm();
   $('resultArea').classList.add('hidden');
   localStorage.removeItem(ACTIVE_KEY);
@@ -544,9 +598,11 @@ function openEvent(id) {
   state.currentEventId = id;
   writeForm(ev.data);
   state.generated = ev.generated || null;
+  state.winners  = ev.winners  || null;
   if (state.generated) {
     $('resultArea').classList.remove('hidden');
-    renderTab(state.activeTab);
+    // 이전 활성 탭이 winners였다면 결과 다시 렌더, 아니면 캡션으로
+    renderTab(state.activeTab === 'winners' && state.winners ? 'winners' : 'caption');
   } else {
     $('resultArea').classList.add('hidden');
   }
@@ -559,13 +615,13 @@ function saveCurrentEvent() {
   if (!data.title) { toast('이벤트명을 입력하세요'); return; }
   if (state.currentEventId) {
     const ev = state.events.find(e => e.id === state.currentEventId);
-    if (ev) { ev.data = data; ev.generated = state.generated; ev.updatedAt = Date.now(); }
+    if (ev) { ev.data = data; ev.generated = state.generated; ev.winners = state.winners; ev.updatedAt = Date.now(); }
   } else {
     if (state.events.length >= MAX_EVENTS) {
       toast('최대 30개까지 저장 가능합니다. 오래된 이벤트를 삭제하세요.');
       return;
     }
-    const ev = { id: uuid(), data, generated: state.generated, createdAt: Date.now(), updatedAt: Date.now() };
+    const ev = { id: uuid(), data, generated: state.generated, winners: state.winners, createdAt: Date.now(), updatedAt: Date.now() };
     state.events.push(ev);
     state.currentEventId = ev.id;
     localStorage.setItem(ACTIVE_KEY, ev.id);
@@ -835,10 +891,10 @@ function saveCurrentEventSilent() {
   if (!data.title) return;
   if (state.currentEventId) {
     const ev = state.events.find(e => e.id === state.currentEventId);
-    if (ev) { ev.data = data; ev.generated = state.generated; ev.updatedAt = Date.now(); }
+    if (ev) { ev.data = data; ev.generated = state.generated; ev.winners = state.winners; ev.updatedAt = Date.now(); }
   } else {
     if (state.events.length >= MAX_EVENTS) return;
-    const ev = { id: uuid(), data, generated: state.generated, createdAt: Date.now(), updatedAt: Date.now() };
+    const ev = { id: uuid(), data, generated: state.generated, winners: state.winners, createdAt: Date.now(), updatedAt: Date.now() };
     state.events.push(ev);
     state.currentEventId = ev.id;
     localStorage.setItem(ACTIVE_KEY, ev.id);
@@ -870,14 +926,329 @@ function tabContent(tab) {
 }
 
 function renderTab(tab) {
+  // 메인 결과 없으면 winners 탭 막기
+  if (tab === 'winners' && !state.generated) {
+    toast('먼저 메인 이벤트를 생성하세요');
+    return;
+  }
   state.activeTab = tab;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  $('resultBody').textContent = tabContent(tab);
+
+  if (tab === 'winners') {
+    $('standardPanel').classList.add('hidden');
+    $('winnersPanel').classList.remove('hidden');
+    buildWinnersInputs();
+    renderWinnersResult();
+  } else {
+    $('winnersPanel').classList.add('hidden');
+    $('standardPanel').classList.remove('hidden');
+    $('resultBody').textContent = tabContent(tab);
+  }
 }
 
 document.querySelectorAll('.tab-btn').forEach(b => {
   b.addEventListener('click', () => renderTab(b.dataset.tab));
 });
+
+/* ====================== Winners ====================== */
+function buildWinnersInputs() {
+  const data = readForm();
+  const branches = data.product.branches || [];
+  const qty = parseInt(data.product.qtyPerBranch, 10) || 1;
+  const container = $('winnersInputs');
+  container.innerHTML = '';
+
+  if (!branches.length) {
+    container.innerHTML = '<p class="text-sm text-red-600">대상 지점이 비어있습니다. 상품 정보 섹션에서 지점을 먼저 선택하세요.</p>';
+    return;
+  }
+
+  // 기존 winners 데이터(있으면) 미리 매핑
+  const saved = state.winners?.list || [];
+  const byBranch = {};
+  saved.forEach(w => { (byBranch[w.branch] = byBranch[w.branch] || []).push(w.account); });
+
+  branches.forEach(branch => {
+    const block = document.createElement('div');
+    block.className = 'mb-3';
+    block.innerHTML = `<p class="text-sm font-medium text-gray-700 mb-2">📍 ${escapeHtml(branch)} <span class="text-xs text-gray-400">(${qty}장)</span></p>`;
+    const wrap = document.createElement('div');
+    wrap.className = 'space-y-2';
+    for (let i = 0; i < qty; i++) {
+      const val = (byBranch[branch] && byBranch[branch][i]) || '';
+      wrap.appendChild(makeAccountInput(val, branch));
+    }
+    block.appendChild(wrap);
+    container.appendChild(block);
+  });
+
+  // bonus
+  const bonusContainer = $('bonusInputs');
+  bonusContainer.innerHTML = '';
+  const bonus = state.winners?.bonusList || [{ account: '' }];
+  (bonus.length ? bonus : [{ account: '' }]).forEach(b => {
+    bonusContainer.appendChild(makeAccountInput(b.account || '', null, true));
+  });
+}
+
+function makeAccountInput(value, branch, isBonus) {
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-2';
+  row.dataset.branch = branch || '';
+  row.dataset.bonus = isBonus ? '1' : '0';
+  row.innerHTML = `
+    <span class="text-gray-400 text-sm">@</span>
+    <input type="text" class="flex-1 winner-input" placeholder="계정명" value="${escapeHtml(value)}" />
+    ${isBonus ? '<button class="text-gray-400 hover:text-red-600 text-sm remove-bonus">✕</button>' : ''}
+  `;
+  if (isBonus) {
+    row.querySelector('.remove-bonus').onclick = () => {
+      if ($('bonusInputs').children.length > 1) row.remove();
+    };
+  }
+  // @ 자동 제거
+  row.querySelector('input').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/^@+/, '').trim();
+  });
+  return row;
+}
+
+function readWinnersFromForm() {
+  const list = [];
+  $('winnersInputs').querySelectorAll('[data-branch]').forEach(row => {
+    const branch = row.dataset.branch;
+    const account = row.querySelector('input').value.replace(/^@+/, '').trim();
+    if (account) list.push({ account, branch });
+  });
+  const bonusList = [];
+  $('bonusInputs').querySelectorAll('[data-bonus="1"]').forEach(row => {
+    const account = row.querySelector('input').value.replace(/^@+/, '').trim();
+    if (account) bonusList.push({ account });
+  });
+  return { list, bonusList };
+}
+
+function findDuplicateAccounts(accounts) {
+  const seen = new Set(), dup = new Set();
+  accounts.forEach(a => { if (seen.has(a)) dup.add(a); else seen.add(a); });
+  return [...dup];
+}
+
+/* ----- DM template (no API) ----- */
+function generateWinnerDMs(eventData, winners) {
+  const policies = new Set(eventData.restrictions?.policies || []);
+  const noResale  = policies.has('재판매 금지');
+  const noShow    = policies.has('노쇼 시 자격 소멸');
+  const noRefund  = policies.has('환불 / 교환 불가') || policies.has('현금 환산 불가');
+  const checkInOut = policies.has('체크인/아웃 시간 준수');
+
+  const productType  = (eventData.product?.types || []).join(', ') || '숙박권';
+  const transferable = eventData.restrictions?.transferable || '불가';
+  const maxDogs      = eventData.restrictions?.maxDogs;
+  const maxWeight    = eventData.restrictions?.maxWeight;
+  const onsitePay    = eventData.booking?.onsitePay;
+  const peakDiff     = eventData.booking?.peakDiff;
+
+  const fmt = (d) => d || '미정';
+  const dogLimit = [
+    maxDogs ? `최대 ${maxDogs}마리` : null,
+    maxWeight ? `${maxWeight}kg 이하` : null
+  ].filter(Boolean).join(' / ') || '브랜드 정책에 따름';
+
+  const transferLine = transferable === '불가' ? '양도 불가 (당첨자 본인만 이용 가능)'
+    : transferable === '직계가족만' ? '양도는 직계가족만 가능'
+    : '양도 가능 (사전 통보)';
+
+  const buildOne = (winner, isBonus) => {
+    const branchLine = isBonus
+      ? '원하시는 글램독 지점 중 선택 가능 (이번 이벤트 대상 지점 내)'
+      : `글램독 ${winner.branch}`;
+
+    const cautions = [
+      `반려견 ${dogLimit}`,
+      transferLine,
+      noResale ? '재판매 적발 시 당첨 무효' : null,
+      noShow ? '노쇼 시 숙박권 자동 소멸' : null,
+      noRefund ? '현금 환산 / 차액 지급 불가' : null,
+      checkInOut ? '체크인 / 체크아웃 시간 준수' : null,
+      onsitePay ? `현장 추가 결제: ${onsitePay}` : null,
+      peakDiff || null
+    ].filter(Boolean).map(c => `• ${c}`).join('\n');
+
+    const excludeLine = eventData.schedule?.excludeDates ? `• 제외일: ${eventData.schedule.excludeDates}\n` : '';
+
+    return `@${winner.account}님 안녕하세요, 글램독입니다 🎉
+
+글램독 ${eventData.title}에 당첨되신 것 진심으로 축하드려요!
+
+📍 이용 정보
+• 지점: ${branchLine}
+• 상품: ${productType}
+• 투숙 가능 기간: ${fmt(eventData.schedule?.stayStart)} ~ ${fmt(eventData.schedule?.stayEnd)}
+${excludeLine}• 예약 접수 마감: ${fmt(eventData.schedule?.bookingDeadline)}
+
+📝 예약 방법
+아래 정보를 이 DM으로 회신 부탁드려요:
+1) 예약자 성함 / 연락처
+2) 희망 투숙일
+3) 차량 번호
+4) 반려견 정보 (이름 / 견종 / 체중 / 마리수)
+
+⚠️ 꼭 확인해주세요
+${cautions}
+
+⏰ ${fmt(eventData.schedule?.bookingDeadline)}까지 예약 접수 마감,
+48시간 내 답변 없으시면 차순위로 넘어가니 꼭 확인 부탁드려요!
+
+멋진 추억 만드시길 바랄게요 🐶✨`;
+  };
+
+  const dms = [];
+  winners.list.forEach(w => dms.push({ account: w.account, branch: w.branch, message: buildOne(w, false), bonus: false }));
+  winners.bonusList.forEach(w => dms.push({ account: w.account, branch: '보너스', message: buildOne(w, true), bonus: true }));
+  return dms;
+}
+
+/* ----- Announcement caption (Claude API, plain text streaming) ----- */
+function buildAnnouncementPrompt(data, winners) {
+  const branchLines = winners.list.map(w => `- @${w.account} (${w.branch})`).join('\n');
+  const bonusLines  = winners.bonusList.length
+    ? `\n시크릿/보너스 당첨자:\n${winners.bonusList.map(w => `- @${w.account}`).join('\n')}`
+    : '';
+  return `글램독 "${data.title}" 이벤트 당첨자 발표 캡션을 1개 만들어줘. 이건 인스타 피드/스토리에 올라가는 공지야.
+
+【당첨자】
+${branchLines}${bonusLines}
+
+【톤】
+- 친근하고 사랑스러운 말투, 이모지 적극 활용 (🎉🐶✨💛 등)
+- 첫 줄은 어그로/감사 — 발표 분위기 살짝 띄우기
+- 광고체 금지
+
+【포함 내용】
+1) 이벤트 참여해주신 분들께 감사 인사
+2) 지점별 당첨자 발표 (보너스 당첨자도 따로 표시)
+3) 당첨자분들께 개별 DM 곧 보낼 예정
+4) 48시간 내 회신 부탁 안내
+5) 이번에 안 된 분들 다음 이벤트 기대 멘트
+
+【출력】
+순수 텍스트 캡션 본문만. 다른 설명/코드펜스 없이 본문만 바로 시작.`;
+}
+
+async function callClaudeAnnouncement(data, winners) {
+  const apiKey = getApiKey();
+  if (!apiKey) { openSettings(); throw new Error('API 키를 먼저 설정하세요'); }
+
+  const body = {
+    model: MODEL,
+    max_tokens: 2000,
+    stream: true,
+    messages: [{ role: 'user', content: buildAnnouncementPrompt(data, winners) }]
+  };
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`API 오류 (${res.status}): ${t.slice(0,300)}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '', accumulated = '';
+  let usage = { input_tokens: 0, output_tokens: 0 };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const dataStr = line.slice(6).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+      try {
+        const ev = JSON.parse(dataStr);
+        if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+          accumulated += ev.delta.text;
+          $('annStreamPreview').textContent = accumulated.slice(-600);
+        } else if (ev.type === 'message_start' && ev.message?.usage) {
+          Object.assign(usage, ev.message.usage);
+        } else if (ev.type === 'message_delta' && ev.usage) {
+          Object.assign(usage, ev.usage);
+        }
+      } catch {}
+    }
+  }
+  return { text: accumulated.trim(), usage };
+}
+
+async function generateWinnersAll() {
+  const data = readForm();
+  const winners = readWinnersFromForm();
+
+  if (!winners.list.length && !winners.bonusList.length) {
+    toast('당첨자 1명 이상 입력해주세요'); return;
+  }
+  const dupes = findDuplicateAccounts([...winners.list, ...winners.bonusList].map(w => w.account));
+  if (dupes.length) { toast('중복 계정: @' + dupes.join(', @')); return; }
+
+  $('annLoading').style.display = 'block';
+  $('annLoading').classList.remove('hidden');
+  $('annStreamPreview').textContent = '';
+  try {
+    const { text, usage } = await callClaudeAnnouncement(data, winners);
+    const dms = generateWinnerDMs(data, winners);
+    state.winners = { list: winners.list, bonusList: winners.bonusList, announcement: text, dms };
+    renderWinnersResult();
+    saveCurrentEventSilent();
+    showCostSummary(usage);
+  } catch (e) {
+    showRawError('당첨자 공지 생성 실패\n\n' + e.message);
+  } finally {
+    $('annLoading').classList.add('hidden');
+    $('annLoading').style.display = 'none';
+  }
+}
+
+function renderWinnersResult() {
+  if (!state.winners?.announcement) {
+    $('winnersResult').classList.add('hidden');
+    return;
+  }
+  $('winnersResult').classList.remove('hidden');
+  $('announceBody').textContent = state.winners.announcement;
+
+  const dmCards = $('dmCards');
+  dmCards.innerHTML = '';
+  (state.winners.dms || []).forEach((dm, idx) => {
+    const card = document.createElement('div');
+    card.className = 'border border-gray-200 rounded-lg overflow-hidden';
+    card.innerHTML = `
+      <div class="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
+        <p class="font-semibold text-sm">💌 @${escapeHtml(dm.account)} <span class="text-xs text-gray-400 ml-1">(${escapeHtml(dm.branch)})</span></p>
+        <button class="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-white" data-copy-dm="${idx}">복사</button>
+      </div>
+      <pre class="result p-4 text-gray-800"></pre>
+    `;
+    card.querySelector('pre').textContent = dm.message;
+    card.querySelector('[data-copy-dm]').onclick = async () => {
+      await navigator.clipboard.writeText(dm.message);
+      toast(`@${dm.account} DM 복사됨`);
+    };
+    dmCards.appendChild(card);
+  });
+}
 
 /* ====================== Buttons ====================== */
 $('generateBtn').onclick = generate;
@@ -891,12 +1262,18 @@ $('copyBtn').onclick = async () => {
 $('downloadBtn').onclick = () => {
   if (!state.generated) return;
   const data = readForm();
-  const all = `# ${data.title}\n생성일: ${new Date().toLocaleString()}\n\n` +
+  let all = `# ${data.title}\n생성일: ${new Date().toLocaleString()}\n\n` +
     `===== 인스타 캡션 =====\n${tabContent('caption')}\n\n` +
     `===== 이벤트 규정 =====\n${tabContent('rules')}\n\n` +
     `===== 직원 운영 가이드 =====\n${tabContent('staff')}\n\n` +
-    `===== 당첨자 DM =====\n${tabContent('dm')}\n\n` +
+    `===== 당첨자 DM (가이드) =====\n${tabContent('dm')}\n\n` +
     `===== 체크리스트 =====\n${tabContent('checklist')}\n`;
+  if (state.winners?.announcement) {
+    all += `\n===== 🎊 공지 캡션 =====\n${state.winners.announcement}\n\n`;
+    (state.winners.dms || []).forEach(dm => {
+      all += `--- @${dm.account}${dm.bonus ? ' (보너스)' : ` (${dm.branch})`} ---\n${dm.message}\n\n`;
+    });
+  }
   const blob = new Blob([all], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -988,6 +1365,28 @@ $('rawErrorCopy').onclick = async () => {
   await navigator.clipboard.writeText($('rawErrorBody').value);
   toast('복사됨');
 };
+
+/* Winners 탭 버튼들 */
+$('addBonusBtn').onclick = () => {
+  const c = $('bonusInputs');
+  if (c.children.length >= MAX_BONUS) { toast(`보너스 당첨자는 최대 ${MAX_BONUS}명`); return; }
+  c.appendChild(makeAccountInput('', null, true));
+};
+$('genAnnounceBtn').onclick = generateWinnersAll;
+$('copyAnnounceBtn').onclick = async () => {
+  if (!state.winners?.announcement) return;
+  await navigator.clipboard.writeText(state.winners.announcement);
+  toast('공지 캡션 복사됨');
+};
+$('copyAllDMsBtn').onclick = async () => {
+  if (!state.winners?.dms?.length) return;
+  const all = state.winners.dms.map(dm =>
+    `═══ @${dm.account}${dm.bonus ? ' (보너스)' : ` (${dm.branch})`} ═══\n\n${dm.message}`
+  ).join('\n\n');
+  await navigator.clipboard.writeText(all);
+  toast(`DM ${state.winners.dms.length}개 일괄 복사됨`);
+};
+$('saveWinnersBtn').onclick = saveCurrentEvent;
 
 /* ====================== Init ====================== */
 function init() {
