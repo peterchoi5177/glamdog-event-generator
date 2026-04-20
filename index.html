@@ -305,10 +305,19 @@
 
 <!-- Loading overlay -->
 <div id="loadingOverlay" class="fixed inset-0 bg-black/40 hidden items-center justify-center z-40">
-  <div class="bg-white rounded-xl p-6 flex flex-col items-center">
-    <div class="w-8 h-8 border-2 border-gray-900 border-t-transparent rounded-full animate-spin mb-3"></div>
-    <p class="text-sm text-gray-700">Claude가 이벤트 자료를 만들고 있습니다…</p>
-    <p id="loadingHint" class="text-xs text-gray-400 mt-1">보통 30~60초 정도 걸려요</p>
+  <div class="bg-white rounded-xl p-5 w-full max-w-lg">
+    <div class="flex items-center gap-3 mb-3">
+      <div class="w-6 h-6 border-2 border-gray-900 border-t-transparent rounded-full animate-spin"></div>
+      <p class="text-sm text-gray-800 font-medium">Claude가 이벤트 자료를 만들고 있습니다…</p>
+    </div>
+    <p id="loadingHint" class="text-xs text-gray-500 mb-2">보통 60~120초 정도 걸려요. 글자가 흐르는 게 보이면 정상입니다.</p>
+    <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 h-40 overflow-hidden">
+      <p id="streamPreview" class="text-xs text-gray-600 font-mono whitespace-pre-wrap leading-relaxed"></p>
+    </div>
+    <div class="flex justify-between text-xs text-gray-400 mt-2">
+      <span id="streamCount">0자</span>
+      <span id="streamTimer">0초</span>
+    </div>
   </div>
 </div>
 
@@ -659,6 +668,7 @@ async function callClaude(data) {
   const body = {
     model: MODEL,
     max_tokens: 16000,
+    stream: true,
     messages: [
       { role: 'user', content: buildPrompt(data) },
       { role: 'assistant', content: '{' }
@@ -680,12 +690,43 @@ async function callClaude(data) {
     const errText = await res.text();
     throw new Error(`API 오류 (${res.status}): ${errText.slice(0, 300)}`);
   }
-  const json = await res.json();
-  let text = json.content?.[0]?.text || '';
-  const stopReason = json.stop_reason;
+
+  // SSE 스트림 처리
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let accumulated = '';
+  let stopReason = null;
+  const startedAt = Date.now();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const dataStr = line.slice(6).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+      try {
+        const ev = JSON.parse(dataStr);
+        if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+          accumulated += ev.delta.text;
+          updateStreamProgress(accumulated, startedAt);
+        } else if (ev.type === 'message_delta' && ev.delta?.stop_reason) {
+          stopReason = ev.delta.stop_reason;
+        } else if (ev.type === 'error') {
+          throw new Error('스트림 에러: ' + JSON.stringify(ev.error));
+        }
+      } catch (parseErr) {
+        // SSE 한 줄 파싱 실패는 무시 (다음 청크에서 합쳐짐)
+      }
+    }
+  }
 
   // assistant prefill로 '{' 를 보냈으니 응답 앞에 다시 붙임
-  text = '{' + text;
+  let text = '{' + accumulated;
 
   // 디버그용 콘솔 로그
   console.log('[Claude raw response]', text);
@@ -710,6 +751,15 @@ async function callClaude(data) {
     }
     throw new Error('JSON 파싱 실패 — 우측 하단 에러 창에서 원본 확인 가능');
   }
+}
+
+function updateStreamProgress(accumulated, startedAt) {
+  const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+  $('streamCount').textContent = accumulated.length.toLocaleString() + '자';
+  $('streamTimer').textContent = elapsed + '초';
+  // 마지막 ~600자만 미리보기 (스크롤되는 느낌)
+  const tail = accumulated.slice(-600);
+  $('streamPreview').textContent = tail;
 }
 
 function showRawError(msg) {
